@@ -11,15 +11,62 @@ const g = globalThis as unknown as {
 const mem = (g.__knMem ??= new Map());
 export const stats = (g.__knStats ??= { commands: 0, requests: 0, byCmd: {} });
 
-function redisEnv(): { url: string; token: string } | null {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return { url: url.replace(/\/$/, ""), token };
+type StorageConfig =
+  | { kind: "rest"; url: string; token: string; urlVar: string }
+  | { kind: "tcp"; url: string; urlVar: string }
+  | { kind: "memory" };
+
+/**
+ * Finds Redis settings however the Vercel Marketplace named them:
+ * KV_REST_API_URL / UPSTASH_REDIS_REST_URL, any prefixed variant (STORAGE_KV_REST_API_URL, MYDB_UPSTASH_REDIS_REST_URL…),
+ * or a TCP url (REDIS_URL, KV_URL, *_REDIS_URL, *_KV_URL).
+ */
+export function detect(env: Record<string, string | undefined> = process.env): StorageConfig {
+  const keys = Object.keys(env).filter((k) => env[k]);
+  const rest: { urlVar: string; tokenVar: string }[] = [];
+  for (const k of keys) {
+    const m = /^(.*?)(KV_REST_API|UPSTASH_REDIS_REST)_URL$/.exec(k);
+    if (!m) continue;
+    const tokenVar = `${m[1]}${m[2]}_TOKEN`;
+    if (env[tokenVar]) rest.push({ urlVar: k, tokenVar });
+  }
+  // prefer the un-prefixed names, then the shortest prefix
+  rest.sort((x, y) => x.urlVar.length - y.urlVar.length);
+  if (rest.length) {
+    const r = rest[0];
+    return { kind: "rest", url: env[r.urlVar]!.replace(/\/$/, ""), token: env[r.tokenVar]!, urlVar: r.urlVar };
+  }
+  const tcp = keys
+    .filter((k) => /(^|_)(REDIS|KV)_URL$/.test(k) && /^rediss?:\/\//.test(env[k] ?? ""))
+    .sort((x, y) => x.length - y.length)[0];
+  if (tcp) return { kind: "tcp", url: env[tcp]!, urlVar: tcp };
+  return { kind: "memory" };
 }
 
+let config: StorageConfig | null = null;
+const cfg = () => (config ??= detect());
+
 export function storageKind(): "redis" | "memory" {
-  return redisEnv() ? "redis" : "memory";
+  return cfg().kind === "memory" ? "memory" : "redis";
+}
+
+/** Safe to expose: which mode and which variable *names* were used, never values. */
+export function storageInfo() {
+  const c = cfg();
+  const names = Object.keys(process.env)
+    .filter((k) => /(KV|REDIS)/.test(k) && /(URL|TOKEN)$/.test(k) && process.env[k])
+    .sort();
+  return { storage: storageKind(), driver: c.kind, using: c.kind === "memory" ? null : c.urlVar, envNamesSeen: names };
+}
+
+/* TCP (rediss://) client, kept warm across invocations */
+type TcpClient = import("ioredis").Redis;
+const gt = globalThis as unknown as { __knTcp?: TcpClient };
+async function tcpClient(url: string): Promise<TcpClient> {
+  if (gt.__knTcp) return gt.__knTcp;
+  const { default: Redis } = await import("ioredis");
+  gt.__knTcp = new Redis(url, { maxRetriesPerRequest: 2, connectTimeout: 5000, enableAutoPipelining: false });
+  return gt.__knTcp;
 }
 
 function live(key: string): MemEntry | undefined {
@@ -132,21 +179,44 @@ export async function exec(cmds: Cmd[]): Promise<unknown[]> {
     const k = String(c[0]).toUpperCase();
     stats.byCmd[k] = (stats.byCmd[k] ?? 0) + 1;
   }
-  const env = redisEnv();
-  if (!env) return cmds.map(memOne);
-  const res = await fetch(`${env.url}/pipeline`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(cmds.map((c) => c.map(String))),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`storage error ${res.status}`);
-  const data = (await res.json()) as { result?: unknown; error?: string }[];
-  return data.map((d) => {
-    if (d.error) throw new Error("storage: " + d.error);
-    return d.result ?? null;
-  });
+  const c = cfg();
+  if (c.kind === "memory") return cmds.map(memOne);
+  if (c.kind === "tcp") {
+    const client = await tcpClient(c.url);
+    const pipe = client.pipeline();
+    for (const cmd of cmds) pipe.call(String(cmd[0]), ...cmd.slice(1).map(String));
+    const out = (await pipe.exec()) ?? [];
+    return out.map(([err, res]) => {
+      if (err) throw new Error("storage: " + err.message);
+      return res ?? null;
+    });
+  }
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${c.url}/pipeline`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${c.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(cmds.map((x) => x.map(String))),
+        cache: "no-store",
+      });
+      if (res.status >= 500 || res.status === 429) throw new Error(`storage http ${res.status}`);
+      if (!res.ok) throw new StorageFatal(`storage http ${res.status}`);
+      const data = (await res.json()) as { result?: unknown; error?: string }[];
+      return data.map((d) => {
+        if (d.error) throw new StorageFatal("storage: " + d.error);
+        return d.result ?? null;
+      });
+    } catch (e) {
+      if (e instanceof StorageFatal) throw e;
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
 }
+
+class StorageFatal extends Error {}
 
 export async function one(cmd: Cmd): Promise<unknown> {
   return (await exec([cmd]))[0];
@@ -154,6 +224,10 @@ export async function one(cmd: Cmd): Promise<unknown> {
 
 export function flatToObj(v: unknown): Record<string, string> {
   const out: Record<string, string> = {};
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    for (const [k, x] of Object.entries(v)) out[k] = String(x);
+    return out;
+  }
   if (Array.isArray(v)) for (let i = 0; i + 1 < v.length; i += 2) out[String(v[i])] = String(v[i + 1]);
   return out;
 }

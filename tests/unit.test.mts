@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { cleanText, parseImage, CODE_RE, newCode } from "../src/lib/util.ts";
 import { leaderboard, mystery } from "../src/lib/rank.ts";
 import { matchName, initials } from "../src/lib/hangul.ts";
+import { detect } from "../src/lib/store.ts";
 
 let n = 0;
 const t = (name: string, fn: () => void) => {
@@ -53,5 +54,18 @@ t("초성 search", () => {
   assert.ok(matchName("김민지", "ㄱㅁ"));
   assert.ok(matchName("김 민지", "민지"));
   assert.ok(!matchName("김민지", "ㅂ"));
+});
+t("storage env detection handles Marketplace prefixes and TCP urls", () => {
+  assert.equal(detect({}).kind, "memory");
+  assert.deepEqual(detect({ KV_REST_API_URL: "https://a.upstash.io/", KV_REST_API_TOKEN: "t" }), { kind: "rest", url: "https://a.upstash.io", token: "t", urlVar: "KV_REST_API_URL" });
+  assert.equal((detect({ STORAGE_KV_REST_API_URL: "https://b", STORAGE_KV_REST_API_TOKEN: "t" }) as { urlVar: string }).urlVar, "STORAGE_KV_REST_API_URL");
+  assert.equal((detect({ MY_UPSTASH_REDIS_REST_URL: "https://c", MY_UPSTASH_REDIS_REST_TOKEN: "t" }) as { urlVar: string }).urlVar, "MY_UPSTASH_REDIS_REST_URL");
+  // url without a matching token is ignored
+  assert.equal(detect({ KV_REST_API_URL: "https://a", KV_REST_API_READ_ONLY_TOKEN: "r" }).kind, "memory");
+  assert.equal(detect({ REDIS_URL: "rediss://default:x@host:6379" }).kind, "tcp");
+  assert.equal(detect({ STORAGE_REDIS_URL: "redis://h:6379" }).kind, "tcp");
+  assert.equal(detect({ REDIS_URL: "https://not-tcp" }).kind, "memory");
+  // REST wins over TCP
+  assert.equal(detect({ REDIS_URL: "rediss://h", KV_REST_API_URL: "https://a", KV_REST_API_TOKEN: "t" }).kind, "rest");
 });
 console.log(`\n${n}개 테스트 통과`);

@@ -28,6 +28,7 @@ export default function HostScreen({ code }: { code: string }) {
   const [tab, setTab] = useState<"rank" | "mystery" | "gallery">("rank");
   const [imgs, setImgs] = useState<Record<string, string>>({});
   const ver = useRef(-1);
+  const miss = useRef<{ n: number; since: number } | null>(null);
   const pver = useRef(-1);
   const revealing = useRef(0);
   const lastTick = useRef(-1);
@@ -46,9 +47,16 @@ export default function HostScreen({ code }: { code: string }) {
       if (r.players) setPlayers(r.players);
       setVoteCount(r.voteCount);
       setStorage(r.storage);
+      miss.current = null;
       setErr("");
     } catch (e) {
-      if (e instanceof ApiError && e.status === 404) setStatus((s) => (s === "deleted" ? s : "gone"));
+      if (e instanceof ApiError && e.status === 404) {
+        // never end the room on one bad answer: need 4 misses in a row over 8s+
+        const m = (miss.current ??= { n: 0, since: Date.now() });
+        m.n++;
+        if (m.n >= 4 && Date.now() - m.since >= 8000) return setStatus((s) => (s === "deleted" ? s : "gone"));
+        setErr("연결이 잠깐 끊겼어요. 다시 잇는 중…");
+      }
       else if (e instanceof ApiError && e.status === 403) setStatus("denied");
       else setErr("연결이 잠깐 끊겼어요. 다시 잇는 중…");
     }

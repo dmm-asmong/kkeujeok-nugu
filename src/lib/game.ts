@@ -240,6 +240,11 @@ async function requireHost(code: string, token: string, fresh: boolean): Promise
 }
 
 export async function createRoom(input: Partial<Settings> | undefined) {
+  // On Vercel each server instance has its own memory, so a memory-only room would vanish between requests.
+  if (storageKind() === "memory" && process.env.VERCEL && process.env.KN_ALLOW_MEMORY !== "1")
+    throw new GameError(503, "저장소(Upstash Redis)가 연결되지 않아 방을 만들 수 없어요. Vercel 프로젝트 Storage에서 Upstash를 연결하고 다시 배포해 주세요.", {
+      storage: "memory",
+    });
   const settings = cleanSettings(input);
   const token = newToken();
   const now = Date.now();

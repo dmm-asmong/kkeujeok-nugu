@@ -15,7 +15,10 @@
 2. 프로젝트 → **Storage** → **Upstash for Redis** (Free) → 이 프로젝트에 연결
 3. **Deployments** → 최신 배포 **Redeploy** (환경변수가 들어가도록)
 
-Redis가 없으면 서버 메모리로 돌아가는 데모 모드가 되고, 진행자 화면에 경고가 떠요.
+저장소 설정은 이름이 어떻게 붙든 자동으로 찾아요: `KV_REST_API_URL/TOKEN`, `UPSTASH_REDIS_REST_URL/TOKEN`, 앞에 접두사가 붙은 이름(`STORAGE_KV_REST_API_URL` 등), 또는 TCP 주소(`REDIS_URL`, `KV_URL`, `*_REDIS_URL`).
+`/api/health`에서 지금 어떤 저장소를 쓰는지(변수 **이름**만) 확인할 수 있어요.
+
+Redis를 못 찾으면 로컬에서는 메모리 데모 모드로 돌고, Vercel에서는 방이 사라지는 걸 막으려고 방 만들기를 막고 안내를 띄워요(`KN_ALLOW_MEMORY=1`이면 허용).
 
 ## 개인정보
 

@@ -21,26 +21,37 @@ export default function PlayerScreen({ code }: { code: string }) {
   const [editing, setEditing] = useState(false);
   const [tokenHash, setTokenHash] = useState("");
   const ver = useRef(-1);
+  const miss = useRef<{ n: number; since: number } | null>(null);
   useTicker(500);
 
   /* resume: check the saved session still exists */
   useEffect(() => {
     if (!session) return;
     let alive = true;
-    api<Me>(`/api/rooms/${code}/me`, { headers: { "x-player-id": session.pid, "x-player-token": session.token } })
-      .then((m) => alive && setMe(m))
-      .catch((e) => {
-        if (!alive) return;
-        if (e instanceof ApiError && e.status === 403) setStatus("kicked");
-        else if (e instanceof ApiError && (e.status === 401 || e.status === 404)) {
-          store.del(skey);
-          setSession(null);
-          if (e.status === 404) setStatus("gone");
-        }
-      });
+    let tries = 0;
+    let misses = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = () =>
+      api<Me>(`/api/rooms/${code}/me`, { headers: { "x-player-id": session.pid, "x-player-token": session.token } })
+        .then((m) => alive && setMe(m))
+        .catch((e) => {
+          if (!alive) return;
+          if (e instanceof ApiError && e.status === 403) return setStatus("kicked");
+          // only forget the session after the server says "unknown" several times in a row
+          if (e instanceof ApiError && (e.status === 401 || e.status === 404)) misses++;
+          tries++;
+          if (misses >= 3) {
+            store.del(skey);
+            setSession(null);
+            return;
+          }
+          timer = setTimeout(attempt, Math.min(4000, 700 * tries));
+        });
+    void attempt();
     void sha256Hex(session.token).then((h) => alive && setTokenHash(h));
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
   }, [session, code, skey]);
 
@@ -50,10 +61,16 @@ export default function PlayerScreen({ code }: { code: string }) {
       syncClock(r.now);
       ver.current = r.v;
       if (r.changed && r.state) setState(r.state);
+      miss.current = null;
       setNet("");
     } catch (e) {
-      if (e instanceof ApiError && e.status === 404) setStatus("gone");
-      else setNet("연결 다시 잇는 중…");
+      // A single 404 or error is never "room gone": only 3+ misses in a row over 5s+.
+      if (e instanceof ApiError && e.status === 404) {
+        const m = (miss.current ??= { n: 0, since: Date.now() });
+        m.n++;
+        if (m.n >= 3 && Date.now() - m.since >= 5000) return setStatus("gone");
+      }
+      setNet("연결 다시 잇는 중…");
     }
   }, [code]);
   usePoll(poll, 1500, status === "ok");
