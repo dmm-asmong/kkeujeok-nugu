@@ -12,20 +12,34 @@ export const DEFAULT_SETTINGS: SettingsValue = {
   voteSeconds: 20,
 };
 
+function randomQuestions(setId: string): string[] {
+  const set = findSet(setId);
+  const pool = [...new Set([...set.defaults, ...set.pool])];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, 3);
+}
+
 export function SettingsForm({
   initial,
+  randomizeQuestions = false,
   submitLabel,
   busy,
   onSubmit,
   onCancel,
 }: {
   initial: SettingsValue;
+  randomizeQuestions?: boolean;
   submitLabel: string;
   busy?: boolean;
   onSubmit: (v: SettingsValue) => void;
   onCancel?: () => void;
 }) {
-  const [v, setV] = useState<SettingsValue>(initial);
+  const [v, setV] = useState<SettingsValue>(() =>
+    randomizeQuestions ? { ...initial, questions: randomQuestions(initial.setId) } : initial,
+  );
   const set = findSet(v.setId);
 
   const swap = (i: number) => {
@@ -53,7 +67,7 @@ export function SettingsForm({
               key={s.id}
               className={v.setId === s.id ? "on" : ""}
               aria-pressed={v.setId === s.id}
-              onClick={() => setV({ ...v, setId: s.id, questions: [...s.defaults] })}
+              onClick={() => setV({ ...v, setId: s.id, questions: randomQuestions(s.id) })}
             >
               <b>{s.label}</b>
               <small>{s.hint}</small>
