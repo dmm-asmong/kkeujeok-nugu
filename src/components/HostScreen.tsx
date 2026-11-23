@@ -90,7 +90,7 @@ export default function HostScreen({ code }: { code: string }) {
   const requested = useRef(new Set<string>());
   const wantedList: string[] = [];
   if (meta?.current) wantedList.push(`${meta.current.pid}:${meta.current.imgRev}`);
-  if (phase === "final") for (const p of active) if (p.drew) wantedList.push(`${p.id}:${p.imgRev}`);
+  if (phase === "final" || phase === "lobby" || phase === "draw") for (const p of active) if (p.drew) wantedList.push(`${p.id}:${p.imgRev}`);
   const wanted = wantedList.join(",");
   useEffect(() => {
     if (!token || !wanted) return;
@@ -189,6 +189,26 @@ export default function HostScreen({ code }: { code: string }) {
     store.del(`kn-host:${code}`);
     setStatus("deleted");
   };
+  // Live view: a drawing shows up here the moment its owner submits it (lobby + drawing phases)
+  const drewList = active.filter((p) => p.drew);
+  const live =
+    (phase === "lobby" || phase === "draw") && drewList.length > 0 ? (
+      <div
+        className="gallery live-gallery"
+        aria-label="방금 올라온 낙서"
+        style={{ gridTemplateColumns: `repeat(${drewList.length > 8 ? 5 : drewList.length > 3 ? 4 : 3}, minmax(0, 1fr))`, marginTop: "2vh" }}
+      >
+        {drewList.map((p, i) => {
+          const src = imgs[`${p.id}:${p.imgRev}`];
+          return (
+            <figure key={p.id} className="gal" style={{ ["--tilt" as string]: `${((i * 37) % 7) - 3}deg` }}>
+              {src ? <img src={src} alt={`${p.nick}의 낙서`} /> : <div className="ph" />}
+              <figcaption>{p.nick}</figcaption>
+            </figure>
+          );
+        })}
+      </div>
+    ) : null;
   const total = meta.settings.rounds === 0 ? meta.order.length : Math.min(meta.settings.rounds, meta.order.length);
 
   return (
@@ -262,6 +282,7 @@ export default function HostScreen({ code }: { code: string }) {
                   ))}
                 </ul>
               )}
+              {live}
             </div>
           </section>
           <footer className="stage-bar">
@@ -309,6 +330,7 @@ export default function HostScreen({ code }: { code: string }) {
                   </li>
                 ))}
               </ul>
+              {live}
             </div>
             <aside className="mini-join">
               <Qr className="qr" url={joinUrl} />
@@ -325,8 +347,8 @@ export default function HostScreen({ code }: { code: string }) {
             <button className="btn ghost" disabled={busy} onClick={() => act({ type: "extend", seconds: 30 })}>
               +30초
             </button>
-            <button className="btn primary big" disabled={busy || ready.length < 3} onClick={() => act({ type: "start-rounds" })}>
-              {ready.length < 3 ? "3명 이상 완성하면 시작" : "라운드 시작"}
+            <button className="btn primary big" disabled={busy || ready.length < 1} onClick={() => act({ type: "start-rounds" })}>
+              {ready.length < 1 ? "1명 이상 완성하면 시작" : "라운드 시작"}
             </button>
           </footer>
         </>
