@@ -83,7 +83,7 @@ export function SettingsForm({
         <label>
           <span>라운드 수</span>
           <select value={v.rounds} onChange={(e) => setV({ ...v, rounds: Number(e.target.value) })}>
-            {[5, 8, 10, 12, 15, 20].map((n) => (
+            {[3, 5, 8, 10, 12, 15, 20].map((n) => (
               <option key={n} value={n}>
                 {n}명 맞히기
               </option>
