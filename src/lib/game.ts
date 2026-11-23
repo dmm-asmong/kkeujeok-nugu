@@ -411,7 +411,7 @@ export async function hostAction(code: string, token: string, action: HostAction
       if (meta.phase !== "draw" && meta.phase !== "lobby") throw new GameError(409, "이미 라운드 중이에요");
       const players = await loadPlayers(code);
       const ready = Object.values(players).filter(isReady);
-      if (ready.length < 3) throw new GameError(409, "소개를 마친 사람이 3명 이상 있어야 시작할 수 있어요");
+      if (ready.length < 1) throw new GameError(409, "소개를 마친 사람이 1명 이상 있어야 시작할 수 있어요");
       meta.order = shuffle(ready.map((p) => p.id));
       meta.shown = [];
       meta.round = 0;
