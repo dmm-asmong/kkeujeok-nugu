@@ -5,6 +5,8 @@ let muted = false;
 
 export function setMuted(m: boolean) {
   muted = m;
+  if (m) haltBgm(0.25);
+  else if (bgmWanted) void bgm.start();
 }
 export function isMuted() {
   return muted;
@@ -80,5 +82,82 @@ export const sfx = {
   fanfare() {
     const seq = [523.25, 523.25, 659.25, 783.99, 659.25, 1046.5];
     seq.forEach((f, i) => tone(f, i * 0.13, i === seq.length - 1 ? 0.9 : 0.16, "triangle", 0.17));
+  },
+};
+
+/* ---------- background music (CC0 "Happy Loop" by wipics, /audio/happy-loop.mp3) ---------- */
+const BGM_URL = "/audio/happy-loop.mp3";
+const BGM_VOLUME = 0.22; // the track is mastered loud; keep it under the voices and effects
+let bgmWanted = false;
+let bgmLoading = false;
+let bgmBuf: AudioBuffer | null = null;
+let bgmEnd = 0;
+let bgmSrc: AudioBufferSourceNode | null = null;
+let bgmGain: GainNode | null = null;
+
+function haltBgm(fade = 0.4) {
+  const c = ctx;
+  const src = bgmSrc;
+  const g = bgmGain;
+  bgmSrc = null;
+  bgmGain = null;
+  if (!c || !src || !g) return;
+  const t = c.currentTime;
+  g.gain.cancelScheduledValues(t);
+  g.gain.setValueAtTime(g.gain.value, t);
+  g.gain.linearRampToValueAtTime(0, t + fade);
+  try {
+    src.stop(t + fade + 0.05);
+  } catch {
+    /* already stopped */
+  }
+}
+
+/** Length of the audible part: the mp3 ends with ~1s of silence that would make the loop stutter. */
+function audibleEnd(buf: AudioBuffer) {
+  const d = buf.getChannelData(0);
+  let i = d.length - 1;
+  while (i > 0 && Math.abs(d[i]) < 0.002) i--;
+  return Math.min(buf.duration, (i + 1) / buf.sampleRate + 0.02);
+}
+
+export const bgm = {
+  /** Safe to call many times (page open, every tap). Needs a user tap once on a fresh page load. */
+  async start() {
+    bgmWanted = true;
+    if (bgmSrc) return;
+    const c = ac();
+    if (!c) return;
+    if (!bgmBuf) {
+      if (bgmLoading) return;
+      bgmLoading = true;
+      try {
+        const res = await fetch(BGM_URL);
+        if (!res.ok) throw new Error(String(res.status));
+        bgmBuf = await c.decodeAudioData(await res.arrayBuffer());
+        bgmEnd = audibleEnd(bgmBuf);
+      } catch {
+        bgmBuf = null; // music is optional: the game keeps working without it
+      } finally {
+        bgmLoading = false;
+      }
+    }
+    if (!bgmBuf || !bgmWanted || muted || bgmSrc) return;
+    const src = c.createBufferSource();
+    const g = c.createGain();
+    src.buffer = bgmBuf;
+    src.loop = true;
+    src.loopStart = 0;
+    src.loopEnd = bgmEnd;
+    g.gain.setValueAtTime(0, c.currentTime);
+    g.gain.linearRampToValueAtTime(BGM_VOLUME, c.currentTime + 1.2);
+    src.connect(g).connect(c.destination);
+    src.start();
+    bgmSrc = src;
+    bgmGain = g;
+  },
+  stop() {
+    bgmWanted = false;
+    haltBgm();
   },
 };
