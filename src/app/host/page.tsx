@@ -1,9 +1,16 @@
 "use client";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { DEFAULT_SETTINGS, SettingsForm } from "@/components/SettingsForm";
+import { DEFAULT_SETTINGS } from "@/components/SettingsForm";
 import { api, store } from "@/lib/client";
+
+// Randomize only when a new-room form mounts in the browser, not during server rendering.
+const SettingsForm = dynamic(() => import("@/components/SettingsForm").then((m) => m.SettingsForm), {
+  ssr: false,
+  loading: () => <p role="status">질문을 고르는 중이에요…</p>,
+});
 
 export default function CreateRoom() {
   const router = useRouter();
@@ -41,6 +48,7 @@ export default function CreateRoom() {
       <div className="card create-card">
         <SettingsForm
           initial={DEFAULT_SETTINGS}
+          randomizeQuestions
           submitLabel="이대로 방 열기"
           busy={busy}
           onSubmit={async (settings) => {
