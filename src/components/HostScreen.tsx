@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HostMeta, HostPlayer } from "@/lib/game";
 import { api, ApiError, secondsLeft, store, syncClock } from "@/lib/client";
 import { leaderboard, mystery } from "@/lib/rank";
-import { isMuted, setMuted, sfx } from "@/lib/sound";
+import { bgm, isMuted, setMuted, sfx } from "@/lib/sound";
 import { usePoll, useTicker } from "@/lib/usePoll";
 import { Qr } from "./Qr";
 import { SettingsForm } from "./SettingsForm";
@@ -35,6 +35,13 @@ export default function HostScreen({ code }: { code: string }) {
   useTicker(250);
 
   useEffect(() => setMuted(muted), [muted]);
+
+  // Background music for the whole room. Browsers may wait for the first tap; every tap on the stage retries (see onPointerDown).
+  useEffect(() => {
+    if (!token || status !== "ok") return;
+    void bgm.start();
+    return () => bgm.stop();
+  }, [token, status]);
 
   const poll = useCallback(async () => {
     if (!token) return;
@@ -212,7 +219,10 @@ export default function HostScreen({ code }: { code: string }) {
   const total = meta.settings.rounds === 0 ? meta.order.length : Math.min(meta.settings.rounds, meta.order.length);
 
   return (
-    <div className={`stage phase-${phase}`} onPointerDown={() => sfx.unlock()}>
+    <div className={`stage phase-${phase}`} onPointerDown={() => {
+        sfx.unlock();
+        void bgm.start();
+      }}>
       <header className="stage-top">
         <span className="logo">
           끄적<em>누구</em>
